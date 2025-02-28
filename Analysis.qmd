@@ -1,0 +1,13 @@
+---
+title: "Analysis"
+format: pdf
+---
+
+```{r}
+# List of municipalities w sugar mills
+mills <- c("Balanga", "Bamban", "Calumpit", "Calamba", "Floridablanca", "Nasugbu", "Manaoag", "Candon",
+           "Paniqui", "San Fernando", "San Miguel", "San Jose", "Dumalag", "Pilar", "Barotac",
+           "Bais", "Binalbagan", "Bacolod", "Escalante", "Silay", "Fabrica", "La Carlota", "Bago",
+           "Talisay", "Victorias", "Medellin", "Ormoc")
+```
+

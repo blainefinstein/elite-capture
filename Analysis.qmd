@@ -1,13 +1,142 @@
 ---
 title: "Analysis"
+author: "Blaine Finstein and Jose Gloria"
 format: pdf
 ---
 
+```{r setup, include = FALSE}
+source("packages.R")
+```
+
+
 ```{r}
+# Labor Force Survey
+
 # List of municipalities w sugar mills
 mills <- c("Balanga", "Bamban", "Calumpit", "Calamba", "Floridablanca", "Nasugbu", "Manaoag", "Candon",
            "Paniqui", "San Fernando", "San Miguel", "San Jose", "Dumalag", "Pilar", "Barotac",
            "Bais", "Binalbagan", "Bacolod", "Escalante", "Silay", "Fabrica", "La Carlota", "Bago",
            "Talisay", "Victorias", "Medellin", "Ormoc")
+mill_codes <- c("030803000", "036902000", "031407000")
+
+# psgc matching dat
+psgc_match <- read_excel("Data/PSGC_Publication_Sept2018.xlsx", sheet = "PSGC") |>
+  filter(Level == "Mun") |> 
+  rename(mun = Name, pop = POPULATION, class = Classification) |> 
+  mutate(mun_psgc = substring(Code, 1, nchar(Code) - 2)) |> 
+  mutate(class = case_when(
+    class == "1st" ~ 1,
+    class == "2nd" ~ 2,
+    class == "3rd" ~ 3,
+    class == "4th" ~ 4,
+    class == "5th" ~ 5,
+    class == "6th" ~ 6,
+    .default = NA
+  )) |> 
+  select(mun, mun_psgc, pop, class)
+
+# Read in labor force surveys
+lfs <- list.files("Data/Labor Force Surveys") |> 
+  map_df(\(x) read_csv(paste0("Data/Labor Force Surveys/", x),
+                       col_types = cols(.default = col_character()))) |> 
+  mutate(PSU = paste0(REG, PSU)) |> 
+  rename(mun_psgc = PSU) |> 
+  left_join(psgc_match, by = c("mun_psgc"))
+
+# Create analysis vars
+lfs_eval <- lfs |> 
+  mutate(mill = ifelse(mun %in% toupper(mills), 1, 0),
+         college = ifelse(J12C09_GRADE > 800, 1, 0),
+         employed = ifelse(CEMPST1 == "1", 1, 0),
+         agri = ifelse(C45_POCC == "92", 1, 0),
+         first_class = ifelse(class == 1, 1, 0),
+         first_second_class = ifelse(class < 3, 1, 0),
+         first_second_third_class = ifelse(class < 4, 1, 0),
+         PUFC25_PBASIC = as.numeric(str_remove(PUFC25_PBASIC, "^0+")),
+         .before = REG)
+
+summary(lm(agri ~ mill + class, data = lfs_eval))
+summary(glm(college ~ mill + class, data = lfs_eval, family = "binomial"))
+summary(glm(first_class ~ mill, data = lfs_eval, family = "binomial"))
+summary(lm(PUFC25_PBASIC ~ mill, data = lfs_eval))
+```
+
+```{r}
+# Political dynasties analysis
+
+dynasties <- read_excel("Data/ASoG-POLITICAL-DYNASTIES-DATASET-V2016.xlsx", sheet = "Data") |> 
+  rename(mun = Municipality.City) |> 
+  mutate(mill = ifelse(mun %in% toupper(mills), 1, 0))
+
+summary(glm(fat ~ mill, data = dynasties, family = "binomial"))
+summary(lm(mill ~ fat, data = dynasties))
+```
+
+```{r}
+# Budget analysis
+
+process_quarterly <- function(file_path, sheet_name) {
+  data <- read_excel(file_path, sheet = sheet_name, col_names = FALSE)
+  
+  # Identify the last cell with text in the first 5 rows
+  column_names <- data[1:10, ]|> 
+    as.data.frame() |> 
+    summarise_all(~ last(na.omit(.))) |> 
+    unlist()
+  
+  # Clean column names
+  cleaned_column_names <- column_names |> 
+    str_to_lower() |> 
+    str_replace_all(" ", "_") |> 
+    str_replace_all("/", "_") |> 
+    str_replace_all("[^a-z_]", "") |> 
+    str_replace_all("_+", "_")
+  
+  # Set the new column names and eliminate the first 5 rows
+  cleaned_data <- data[-(1:10), ] |> 
+    setNames(cleaned_column_names) |> 
+    filter(lgu_type == "Municipality") |> 
+    select(-c(lgu_type)) |> 
+    rename(mun = lgu_name) 
+  cleaned_data <- cleaned_data |> 
+    mutate(across(4:ncol(cleaned_data), as.numeric)) |> 
+    mutate(quarter = str_match(sheet_name, "Q[1-4]20[0-1][0-9]")[, 1],
+           year = str_match(sheet_name, "20[0-1][0-9]")[, 1],
+           .before = general_fund) |>
+    mutate(kalahi_spending = rowSums(across(c(education_culture_sports_manpower_development,
+                                              health_nutrition_population_control,
+                                              housing_and_community_development,
+                                              social_services_and_social_welfare)),
+                                     na.rm = TRUE),
+           total_spending = rowSums(across(c(general_fund:fund_cash_balance_end)),
+                                    na.rm = TRUE),
+           .before = general_fund) |> 
+    mutate(region = str_replace_all(str_replace_all(region, "Region ", ""), " Region", "")) |>
+    mutate(region = str_replace_all(region, "MIMAROPA", "IV-B"))
+  
+  return(cleaned_data)
+}
+
+spending <- process_quarterly("Data/Quarterly Spending/SRE-QTR-2013.xlsx", sheet = "Q12013") |>
+  rbind(process_quarterly("Data/Quarterly Spending/SRE-QTR-2013.xlsx", sheet = "Q22013")) |> 
+  rbind(process_quarterly("Data/Quarterly Spending/SRE-QTR-2013.xlsx", sheet = "Q32013")) |>
+  rbind(process_quarterly("Data/Quarterly Spending/SRE-QTR-2013.xlsx", sheet = "Q42013")) |> 
+  rbind(process_quarterly("Data/Quarterly Spending/SRE-QTR-2014.xlsx", sheet = "Q12014")) |>
+  rbind(process_quarterly("Data/Quarterly Spending/SRE-QTR-2014.xlsx", sheet = "Q22014")) |> 
+  rbind(process_quarterly("Data/Quarterly Spending/SRE-QTR-2014.xlsx", sheet = "Q32014")) |>
+  rbind(process_quarterly("Data/Quarterly Spending/SRE-QTR-2014.xlsx", sheet = "Q42014"))
+
+# Clean data
+spending[1011,2] <- "Sofronio Espanola"
+
+# Add mill var
+spending <- spending |> 
+  mutate(mill = ifelse(toupper(mun) %in% toupper(mills), 1, 0))
+
+summary(lm(log(internal_revenue_allotment + .000001) ~ mill, data = spending))
+summary(lm(log(other_shares_from_national_tax_collections + .000001) ~ mill, data = spending))
+summary(lm(log(housing_and_community_development + .000001) ~ mill, data = spending))
+summary(lm(log(social_services_and_social_welfare + .000001) ~ mill, data = spending))
+summary(lm(log(general_fund + .000001) ~ mill, data = spending))
 ```
 
